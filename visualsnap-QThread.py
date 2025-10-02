@@ -201,11 +201,11 @@ class VideoStoryboard(QtWidgets.QMainWindow):
         control_layout.addWidget(self.thumb_scroll, 1)
 
         # 操作按钮
-        self.open_btn = QtWidgets.QPushButton("📂 Open")
-        self.play_pause_btn = QtWidgets.QPushButton("▶/⏸ Play/Pause")
-        self.screenshot_btn = QtWidgets.QPushButton("📸 Screenshot")
+        self.open_btn = QtWidgets.QPushButton("📂 打开文件")
+        self.play_pause_btn = QtWidgets.QPushButton("⏯️ 播放/暂停")
+        self.screenshot_btn = QtWidgets.QPushButton("📸 手动抽帧")
         self.auto_snap_btn = QtWidgets.QPushButton("⚡ 自动抽帧")
-        self.generate_btn = QtWidgets.QPushButton("🖼 生成StoryBoard")
+        self.generate_btn = QtWidgets.QPushButton("🖼 生成故事板")
         control_layout.addWidget(self.open_btn)
         control_layout.addWidget(self.play_pause_btn)
         control_layout.addWidget(self.screenshot_btn)
