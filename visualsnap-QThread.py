@@ -52,8 +52,82 @@ class CustomSlider(QtWidgets.QSlider):
             self.setValue(int(value))
             event.accept()
         super().mousePressEvent(event)
+
+class StoryboardWorker(QtCore.QThread):
+    progress = QtCore.pyqtSignal(str)
+    finished = QtCore.pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.main = parent  # 传入主窗口引用
+
+    def run(self):
+        main = self.main
+        if not main.screenshots:
+            self.finished.emit("没有截图，无法生成 Storyboard")
+            return
+
+        # 生成视频信息图片
+        self.progress.emit("[INFO] 生成视频信息图片...")
+        info_img = main.generate_video_info_image()
+
+        # 拼接截图
+        files = [x[0] for x in main.screenshots]
+        montage_file = os.path.join(main.video_dir, "montaged.png")
+        self.progress.emit("[INFO] 拼接截图...")
+        subprocess.run(["magick", "montage"] + files + ["-background", "none", "-geometry", "600x+5+5", "-tile", "3x", montage_file])
+
+        # 扩展到 1920 宽度，垂直居中
+        subprocess.run([
+            "magick", montage_file,
+            "-background", "none",
+            "-gravity", "center",
+            "-extent", "1920x",
+            montage_file
+        ])
+
+        # 合并视频信息图片和 montage
+        if info_img and os.path.exists(info_img):
+            snaps_file = os.path.join(main.video_dir, "Snaps.png")
+            subprocess.run(["magick", "montage", info_img, montage_file, "-background", "none", "-geometry", "+0+0", "-tile", "1x2", snaps_file])
+            final_input = snaps_file
+        else:
+            final_input = montage_file
+
+        # Pattern处理
+        pattern_idx = main.pattern_combo.currentIndex()
+        if pattern_idx >= 0 and pattern_idx < len(main.pattern_files):
+            pattern_file = main.pattern_files[pattern_idx]
+        else:
+            pattern_file = None
+        width, height = map(int, subprocess.check_output(["magick", "identify", "-format", "%w %h", final_input]).decode().strip().split())
+        tiles_file = os.path.join(main.video_dir, "Tiles.jpg")
+        if pattern_file:
+            subprocess.run(["magick", "-size", f"{width}x{height}", "tile:" + pattern_file, tiles_file])
+        else:
+            subprocess.run(["magick", "-size", f"{width}x{height}", "canvas:white", tiles_file])
+
+        final_file = os.path.join(main.video_dir, f"Storyboard-{os.path.basename(main.video_file)}.jpg")
+        subprocess.run(["magick", "composite", "-type", "truecolor", final_input, tiles_file, final_file])
+
+        self.progress.emit(f"生成 Storyboard: {final_file}")
+        print(f"[INFO] 完成！输出文件: {final_file}")
+
+        # --- 清理临时文件 ---
+        temp_files = [
+            os.path.join(main.video_dir, f) for f in ["out.png", "output.txt", "montaged.png", "Snaps.png", "Tiles.jpg"]
+        ]
+        temp_files += glob.glob(os.path.join(main.video_dir, "Screenshot=*.jpg"))
+        for f in temp_files:
+            try:
+                os.remove(f)
+            except FileNotFoundError:
+                pass
+
+        self.finished.emit(final_file)
         
 class VideoStoryboard(QtWidgets.QMainWindow):
+    flash_signal = QtCore.pyqtSignal(str)  # ✅ 定义信号，放在类体里
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Video Storyboard")
@@ -75,17 +149,6 @@ class VideoStoryboard(QtWidgets.QMainWindow):
         # 状态信息
         self.status_label = QtWidgets.QLabel()
         control_layout.insertWidget(0, self.status_label)
-
-        # # 模式选择
-        # self.mode_group = QtWidgets.QGroupBox("抽帧模式")
-        # mode_layout = QtWidgets.QHBoxLayout(self.mode_group)
-        # self.manual_radio = QtWidgets.QRadioButton("手动")
-        # self.auto_radio = QtWidgets.QRadioButton("自动")
-        # self.auto_radio.setChecked(True)
-        # mode_layout.addWidget(self.manual_radio)
-        # mode_layout.addWidget(self.auto_radio)
-        # self.mode_group.setLayout(mode_layout)
-        # control_layout.addWidget(self.mode_group)
 
         # 自动抽帧设置
         self.auto_group = QtWidgets.QGroupBox("自动抽帧设置")
@@ -424,7 +487,7 @@ class VideoStoryboard(QtWidgets.QMainWindow):
             return None
         print("[INFO] 生成视频信息图片...")
         # print(os.path.basename(self.video_file))
-        self.flash_message("[INFO] 生成视频信息图片...")
+        self.flash_signal.emit("[INFO] 生成视频信息图片...")
         output_txt = os.path.join(self.video_dir, "output.txt")
         # 调用 mediainfo 生成文本信息
         subprocess.run(f'mediainfo --Inform="file://template_mediainfo.txt" "{self.video_file}" > "{output_txt}"', shell=True)
@@ -452,61 +515,15 @@ class VideoStoryboard(QtWidgets.QMainWindow):
 
     # --- 生成最终Storyboard ---
     def generate_storyboard(self):
-        if not self.screenshots:
-            QtWidgets.QMessageBox.warning(self, "提示", "没有截图")
-            return
-        # 生成视频信息图片
-        info_img = self.generate_video_info_image()
-        files = [x[0] for x in self.screenshots]
-        montage_file = os.path.join(self.video_dir, "montaged.png")
-        print("[INFO] 拼接截图...")
-        self.flash_message("[INFO] 拼接截图...")
-        subprocess.run(["magick", "montage"] + files + ["-background", "none", "-geometry", "600x+5+5", "-tile", "3x", montage_file])
-        # 扩展到 1920 宽度，垂直居中
-        subprocess.run([
-            "magick", montage_file,
-            "-background", "none",
-            "-gravity", "center",
-            "-extent", "1920x",
-            montage_file
-        ])
-        # 合并视频信息图片和 montage
-        if info_img and os.path.exists(info_img):
-            snaps_file = os.path.join(self.video_dir, "Snaps.png")
-            subprocess.run(["magick", "montage", info_img, montage_file, "-background", "none", "-geometry", "+0+0", "-tile", "1x2", snaps_file])
-            final_input = snaps_file
-        else:
-            final_input = montage_file
-
-        # Pattern处理
-        pattern_idx = self.pattern_combo.currentIndex()
-        if pattern_idx >= 0 and pattern_idx < len(self.pattern_files):
-            pattern_file = self.pattern_files[pattern_idx]
-        else:
-            pattern_file = None
-        width, height = map(int, subprocess.check_output(["magick", "identify", "-format", "%w %h", final_input]).decode().strip().split())
-        tiles_file = os.path.join(self.video_dir, "Tiles.jpg")
-        if pattern_file:
-            subprocess.run(["magick", "-size", f"{width}x{height}", "tile:" + pattern_file, tiles_file])
-        else:
-            subprocess.run(["magick", "-size", f"{width}x{height}", "canvas:white", tiles_file])
-        final_file = os.path.join(self.video_dir, f"Storyboard-{os.path.basename(self.video_file)}.jpg")
-        subprocess.run(["magick", "composite", "-type", "truecolor", final_input, tiles_file, final_file])
-        self.flash_message(f"生成 Storyboard: {final_file}")
-        print(f"[INFO] 完成！输出文件: {final_file}")
-
-        # --- 清理临时文件 ---
-        temp_files = [
-            os.path.join(self.video_dir, f) for f in ["out.png", "output.txt", "montaged.png", "Snaps.png", "Tiles.jpg"]
-        ]
-        temp_files += glob.glob(os.path.join(self.video_dir, "Screenshot=*.jpg"))
-        for f in temp_files:
-            try:
-                os.remove(f)
-                print(f"[INFO] 删除临时文件: {f}")
-            except FileNotFoundError:
-                pass
-
+        self.worker = StoryboardWorker(self)
+        self.worker.progress.connect(self.flash_message)
+        self.worker.finished.connect(self.on_storyboard_finished)
+        self.worker.start()
+    # --- 完成信号处理函数 ---
+    def on_storyboard_finished(self, final_file):
+        self.flash_message(f"完成生成: {final_file}")
+ 
+ 
     # --- 键盘操作 ---
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Left:
